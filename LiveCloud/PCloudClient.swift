@@ -43,12 +43,13 @@ struct PCloudClient {
                     "username": username,
                     "digest": digest,
                     "passworddigest": passwordDigest,
-                ], usePOST: true)
+                ], usePOST: false) // safe as GET: only a hash is sent, never the password
                 if let auth = json["auth"] as? String {
                     appLog("Logged in via \(host)")
                     return PCloudClient(host: host, auth: auth)
                 }
-                failures.append("\(region): no token returned")
+                let keys = json.keys.sorted().joined(separator: ", ")
+                failures.append("\(region): no token returned (response had: \(keys))")
             } catch {
                 appLog("Login via \(host) failed: \(error.localizedDescription)")
                 failures.append("\(region): \(error.localizedDescription)")
