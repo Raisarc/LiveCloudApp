@@ -1,0 +1,30 @@
+name: LiveCloud
+options:
+  bundleIdPrefix: com.example
+  deploymentTarget:
+    iOS: "16.0"
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    MARKETING_VERSION: "1.0"
+    CURRENT_PROJECT_VERSION: "1"
+targets:
+  LiveCloud:
+    type: application
+    platform: iOS
+    sources:
+      - LiveCloud
+    info:
+      path: Support/Info.plist
+      properties:
+        CFBundleDisplayName: LiveCloud
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+        NSPhotoLibraryUsageDescription: "LiveCloud reads your Live Photos so it can upload them to pCloud."
+        NSPhotoLibraryAddUsageDescription: "LiveCloud saves Live Photos downloaded from pCloud to your library."
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.example.livecloud
+        TARGETED_DEVICE_FAMILY: "1"
+    scheme: {}

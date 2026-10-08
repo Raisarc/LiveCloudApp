@@ -1,0 +1,6 @@
+LiveCloud.xcodeproj/
+Support/
+build/
+Payload/
+*.ipa
+.DS_Store
