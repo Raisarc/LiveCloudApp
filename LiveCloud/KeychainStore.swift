@@ -1,7 +1,7 @@
 import Foundation
 import Security
 
-/// Stores the pCloud auth token and host. The password is never stored.
+/// Stores the pCloud login (host, username, password) in the encrypted iOS Keychain.
 enum KeychainStore {
     private static let service = "livecloud.pcloud"
 

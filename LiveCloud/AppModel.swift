@@ -25,8 +25,10 @@ final class AppModel: ObservableObject {
     private static let videoExts: Set<String> = ["mov", "mp4"]
 
     init() {
-        if let auth = KeychainStore.load("auth"), let host = KeychainStore.load("host") {
-            client = PCloudClient(host: host, auth: auth)
+        if let host = KeychainStore.load("host"),
+           let username = KeychainStore.load("username"),
+           let password = KeychainStore.load("password") {
+            client = PCloudClient(host: host, username: username, password: password)
         }
     }
 
@@ -38,8 +40,9 @@ final class AppModel: ObservableObject {
         status = "Logging in…"
         do {
             let c = try await PCloudClient.login(email: email, password: password, preferredHost: preferredHost)
-            KeychainStore.save(c.auth, for: "auth")
             KeychainStore.save(c.host, for: "host")
+            KeychainStore.save(c.username, for: "username")
+            KeychainStore.save(c.password, for: "password")
             try await c.ensureFolder(Self.folder)
             client = c
             status = ""
@@ -49,8 +52,10 @@ final class AppModel: ObservableObject {
     }
 
     func logout() {
-        KeychainStore.delete("auth")
         KeychainStore.delete("host")
+        KeychainStore.delete("username")
+        KeychainStore.delete("password")
+        KeychainStore.delete("auth") // left over from older versions
         client = nil
         items = []
         appLog("Logged out")

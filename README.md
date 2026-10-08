@@ -33,7 +33,7 @@ With a free Apple ID the app expires after **7 days**. Repeat step 3.2 to refres
 
 ## 4. Use it
 
-- **Log in** with your pCloud email and password, and pick the data region your account uses (shown in pCloud's web settings). The app only stores a login token, never the password.
+- **Log in** with your pCloud email and password, and pick the data region your account uses (shown in pCloud's web settings). The app keeps your login in the iPhone's encrypted Keychain and never sends the password itself over the network.
 - **Upload** tab: choose Live Photos and tap Upload.
 - **pCloud** tab: pull to refresh, tap **Save** on an item to put it back into Photos as a Live Photo.
 - **Log** tab: shows what happened, including errors. Use **Copy** to share it when something goes wrong.

@@ -12,54 +12,39 @@ struct PCloudFile {
 }
 
 /// Minimal client for the pCloud HTTP JSON API (https://docs.pcloud.com).
+///
+/// pCloud does not hand this app a login token, so every request is signed with
+/// a fresh digest login instead: username + one-time digest + sha1 hash.
+/// The password itself is never sent over the network.
 struct PCloudClient {
     /// EU accounts live on eapi.pcloud.com, US accounts on api.pcloud.com.
     static let euHost = "eapi.pcloud.com"
     static let usHost = "api.pcloud.com"
 
     let host: String
-    let auth: String
+    let username: String
+    let password: String
 
     // MARK: Login
 
     /// Tries the preferred region first, then the other one, and reports both errors if both fail.
-    /// Uses pCloud's digest login, so the password itself is never sent.
     static func login(email: String, password: String, preferredHost: String) async throws -> PCloudClient {
         let username = email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let hosts = preferredHost == euHost ? [euHost, usHost] : [usHost, euHost]
         var failures: [String] = []
         for host in hosts {
             let region = host == euHost ? "Europe" : "US"
+            let client = PCloudClient(host: host, username: username, password: password)
             do {
-                let digestJSON = try await call(host: host, method: "getdigest", params: [:], usePOST: false)
-                guard let digest = digestJSON["digest"] as? String else {
-                    throw PCloudError(message: "No digest returned")
-                }
-                // passworddigest = sha1(password + sha1(lowercase username) + digest)
-                let passwordDigest = sha1Hex(password + sha1Hex(username) + digest)
-                let json = try await call(host: host, method: "userinfo", params: [
-                    "getauth": "1",
-                    "logout": "1",
-                    "username": username,
-                    "digest": digest,
-                    "passworddigest": passwordDigest,
-                ], usePOST: false) // safe as GET: only a hash is sent, never the password
-                if let auth = json["auth"] as? String {
-                    appLog("Logged in via \(host)")
-                    return PCloudClient(host: host, auth: auth)
-                }
-                let keys = json.keys.sorted().joined(separator: ", ")
-                failures.append("\(region): no token returned (response had: \(keys))")
+                _ = try await client.get("userinfo", [:])
+                appLog("Logged in via \(host)")
+                return client
             } catch {
                 appLog("Login via \(host) failed: \(error.localizedDescription)")
                 failures.append("\(region): \(error.localizedDescription)")
             }
         }
         throw PCloudError(message: failures.joined(separator: "\n"))
-    }
-
-    private static func sha1Hex(_ text: String) -> String {
-        Insecure.SHA1.hash(data: Data(text.utf8)).map { String(format: "%02x", $0) }.joined()
     }
 
     // MARK: Folder operations
@@ -85,15 +70,15 @@ struct PCloudClient {
 
     /// Uploads a file unchanged (byte for byte), which keeps the Live Photo pairing metadata intact.
     func upload(fileURL: URL, toFolder folder: String) async throws {
+        var params = try await signedParams()
+        params["path"] = folder
+        params["nopartial"] = "1"
+
         var comps = URLComponents()
         comps.scheme = "https"
         comps.host = host
         comps.path = "/uploadfile"
-        comps.queryItems = [
-            URLQueryItem(name: "auth", value: auth),
-            URLQueryItem(name: "path", value: folder),
-            URLQueryItem(name: "nopartial", value: "1"),
-        ]
+        comps.queryItems = params.map { URLQueryItem(name: $0.key, value: $0.value) }
         guard let url = comps.url else { throw PCloudError(message: "Bad upload URL") }
 
         let boundary = "Boundary-\(UUID().uuidString)"
@@ -137,33 +122,33 @@ struct PCloudClient {
 
     // MARK: Plumbing
 
-    private func get(_ method: String, _ params: [String: String]) async throws -> [String: Any] {
-        var all = params
-        all["auth"] = auth
-        return try await Self.call(host: host, method: method, params: all, usePOST: false)
+    /// username + a fresh one-time digest + passworddigest = sha1(password + sha1(username) + digest)
+    private func signedParams() async throws -> [String: String] {
+        let json = try await Self.call(host: host, method: "getdigest", params: [:])
+        guard let digest = json["digest"] as? String else {
+            throw PCloudError(message: "No digest returned")
+        }
+        return [
+            "username": username,
+            "digest": digest,
+            "passworddigest": Self.sha1Hex(password + Self.sha1Hex(username) + digest),
+        ]
     }
 
-    private static func call(host: String, method: String, params: [String: String], usePOST: Bool) async throws -> [String: Any] {
+    private func get(_ method: String, _ params: [String: String]) async throws -> [String: Any] {
+        var all = try await signedParams()
+        all.merge(params) { _, new in new }
+        return try await Self.call(host: host, method: method, params: all)
+    }
+
+    private static func call(host: String, method: String, params: [String: String]) async throws -> [String: Any] {
         var comps = URLComponents()
         comps.scheme = "https"
         comps.host = host
         comps.path = "/\(method)"
-
-        var request: URLRequest
-        if usePOST {
-            // POST keeps the password out of the URL.
-            guard let url = comps.url else { throw PCloudError(message: "Bad URL") }
-            request = URLRequest(url: url)
-            request.httpMethod = "POST"
-            request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
-            request.httpBody = Data(formEncode(params).utf8)
-        } else {
-            comps.queryItems = params.map { URLQueryItem(name: $0.key, value: $0.value) }
-            guard let url = comps.url else { throw PCloudError(message: "Bad URL") }
-            request = URLRequest(url: url)
-        }
-
-        let (data, _) = try await URLSession.shared.data(for: request)
+        comps.queryItems = params.map { URLQueryItem(name: $0.key, value: $0.value) }
+        guard let url = comps.url else { throw PCloudError(message: "Bad URL") }
+        let (data, _) = try await URLSession.shared.data(from: url)
         return try parse(data)
     }
 
@@ -179,13 +164,7 @@ struct PCloudClient {
         return json
     }
 
-    private static func formEncode(_ params: [String: String]) -> String {
-        var allowed = CharacterSet.alphanumerics
-        allowed.insert(charactersIn: "-._~")
-        return params.map { key, value in
-            let k = key.addingPercentEncoding(withAllowedCharacters: allowed) ?? key
-            let v = value.addingPercentEncoding(withAllowedCharacters: allowed) ?? value
-            return "\(k)=\(v)"
-        }.joined(separator: "&")
+    private static func sha1Hex(_ text: String) -> String {
+        Insecure.SHA1.hash(data: Data(text.utf8)).map { String(format: "%02x", $0) }.joined()
     }
 }
