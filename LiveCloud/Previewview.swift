@@ -53,15 +53,16 @@ final class Previewer: ObservableObject {
     }
 
     /// Preview something stored in pCloud (downloads it first).
-    func show(item: CloudItem, client: PCloudClient, folder: String) {
+    func show(item: CloudItem, client: PCloudClient) {
         let current = begin(title: item.base)
         message = "Downloading…"
         Task {
             do {
                 let dir = try LivePhotoFiles.makeTempDirectory()
-                if let p = item.photoName, let v = item.videoName {
-                    let photo = try await client.download(name: p, inFolder: folder, to: dir)
-                    let video = try await client.download(name: v, inFolder: folder, to: dir)
+                if let p = item.photoName, let pid = item.photoFileID,
+                   let v = item.videoName, let vid = item.videoFileID {
+                    let photo = try await client.download(fileid: pid, name: p, to: dir)
+                    let video = try await client.download(fileid: vid, name: v, to: dir)
                     PHLivePhoto.request(withResourceFileURLs: [photo, video], placeholderImage: nil,
                                         targetSize: .zero, contentMode: .aspectFit) { livePhoto, info in
                         if let livePhoto {
@@ -70,11 +71,11 @@ final class Previewer: ObservableObject {
                             Task { @MainActor in self.fail(error.localizedDescription, for: current) }
                         }
                     }
-                } else if let v = item.videoName {
-                    let video = try await client.download(name: v, inFolder: folder, to: dir)
+                } else if let v = item.videoName, let vid = item.videoFileID {
+                    let video = try await client.download(fileid: vid, name: v, to: dir)
                     set(.video(AVPlayer(url: video)), for: current)
-                } else if let p = item.photoName {
-                    let photo = try await client.download(name: p, inFolder: folder, to: dir)
+                } else if let p = item.photoName, let pid = item.photoFileID {
+                    let photo = try await client.download(fileid: pid, name: p, to: dir)
                     if let image = UIImage(contentsOfFile: photo.path) {
                         set(.image(image), for: current)
                     } else {

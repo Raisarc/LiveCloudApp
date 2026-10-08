@@ -10,6 +10,7 @@ struct PCloudFile {
     let fileid: Int
     let name: String
     let size: Int64
+    let parentfolderid: Int
 
     init?(_ item: [String: Any]) {
         guard (item["isfolder"] as? Bool) != true,
@@ -18,6 +19,7 @@ struct PCloudFile {
         self.fileid = fileid
         self.name = name
         self.size = (item["size"] as? NSNumber)?.int64Value ?? 0
+        self.parentfolderid = item["parentfolderid"] as? Int ?? -1
     }
 }
 
@@ -173,7 +175,18 @@ struct PCloudClient {
 
     /// Downloads a file into `directory`, keeping its original name (the extension matters to Photos).
     func download(name: String, inFolder folder: String, to directory: URL) async throws -> URL {
-        let json = try await get("getfilelink", ["path": "\(folder)/\(name)", "forcedownload": "1"])
+        try await download(linkParams: ["path": "\(folder)/\(name)"], name: name, to: directory)
+    }
+
+    /// Same, but by file id, so it works for files in any folder.
+    func download(fileid: Int, name: String, to directory: URL) async throws -> URL {
+        try await download(linkParams: ["fileid": String(fileid)], name: name, to: directory)
+    }
+
+    private func download(linkParams: [String: String], name: String, to directory: URL) async throws -> URL {
+        var params = linkParams
+        params["forcedownload"] = "1"
+        let json = try await get("getfilelink", params)
         guard let hosts = json["hosts"] as? [String],
               let linkHost = hosts.first,
               let path = json["path"] as? String,

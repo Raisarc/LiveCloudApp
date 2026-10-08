@@ -122,6 +122,14 @@ struct CloudView: View {
     var body: some View {
         NavigationStack {
             ScrollView {
+                Picker("Show", selection: $model.source) {
+                    ForEach(CloudSource.allCases) { Text($0.rawValue).tag($0) }
+                }
+                .pickerStyle(.segmented)
+                .padding(.horizontal)
+                .onChange(of: model.source) { _ in
+                    Task { await model.refresh() }
+                }
                 if !model.status.isEmpty {
                     Text(model.status)
                         .font(.footnote)
@@ -150,7 +158,7 @@ struct CloudView: View {
                         }
                         .onLongPressGesture(minimumDuration: 0.35) {
                             guard let client = model.client else { return }
-                            previewer.show(item: item, client: client, folder: AppModel.folder)
+                            previewer.show(item: item, client: client)
                         }
                     }
                 }

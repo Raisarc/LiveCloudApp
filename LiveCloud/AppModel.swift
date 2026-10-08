@@ -5,15 +5,26 @@ import SwiftUI
 
 /// One entry in the pCloud folder: a still and/or a video sharing the same base name.
 struct CloudItem: Identifiable {
+    let id: String
     let base: String
     var photoName: String?
     var videoName: String?
     var photoFileID: Int?
     var videoFileID: Int?
-    var id: String { base }
     /// The file to show as the thumbnail.
     var thumbFileID: Int? { photoFileID ?? videoFileID }
     var isLive: Bool { photoName != nil && videoName != nil }
+
+    init(base: String, folderKey: String = "") {
+        self.base = base
+        self.id = folderKey.isEmpty ? base : "\(folderKey)/\(base)"
+    }
+}
+
+enum CloudSource: String, CaseIterable, Identifiable {
+    case liveCloud = "LiveCloud folder"
+    case everywhere = "All Live Photos"
+    var id: String { rawValue }
 }
 
 @MainActor
@@ -23,6 +34,7 @@ final class AppModel: ObservableObject {
     @Published var client: PCloudClient?
     @Published var items: [CloudItem] = []
     @Published var thumbnails: [Int: URL] = [:]
+    @Published var source: CloudSource = .liveCloud
     @Published var busy = false
     @Published var status = ""
 
@@ -107,25 +119,18 @@ final class AppModel: ObservableObject {
     func refresh() async {
         guard let client else { return }
         do {
-            let files = try await client.listFiles(in: Self.folder)
-            var groups: [String: CloudItem] = [:]
-            for file in files {
-                let ext = (file.name as NSString).pathExtension.lowercased()
-                let base = (file.name as NSString).deletingPathExtension
-                var item = groups[base] ?? CloudItem(base: base)
-                if Self.photoExts.contains(ext) {
-                    item.photoName = file.name
-                    item.photoFileID = file.fileid
-                } else if Self.videoExts.contains(ext) {
-                    item.videoName = file.name
-                    item.videoFileID = file.fileid
-                } else {
-                    continue
-                }
-                groups[base] = item
+            let groups: [String: CloudItem]
+            switch source {
+            case .liveCloud:
+                groups = Self.group(try await client.listFiles(in: Self.folder), byFolder: false)
+            case .everywhere:
+                status = "Looking for Live Photos in all of pCloud…"
+                // Only complete pairs (still + video with the same name in the same folder).
+                groups = Self.group(try await client.listAllFiles(), byFolder: true).filter { $0.value.isLive }
+                status = ""
             }
             items = groups.values.sorted { $0.base > $1.base }
-            appLog("Found \(items.count) item(s) in \(Self.folder)")
+            appLog("Found \(items.count) item(s) (\(source.rawValue))")
 
             // Thumbnails, in batches of 100.
             let ids = items.compactMap(\.thumbFileID)
@@ -143,6 +148,29 @@ final class AppModel: ObservableObject {
             status = error.localizedDescription
             appLog("List failed: \(error.localizedDescription)")
         }
+    }
+
+    /// Pairs files that share a name (IMG_1234.HEIC + IMG_1234.MOV) into one item.
+    private static func group(_ files: [PCloudFile], byFolder: Bool) -> [String: CloudItem] {
+        var groups: [String: CloudItem] = [:]
+        for file in files {
+            let ext = (file.name as NSString).pathExtension.lowercased()
+            let base = (file.name as NSString).deletingPathExtension
+            let folderKey = byFolder ? String(file.parentfolderid) : ""
+            let key = "\(folderKey)/\(base)"
+            var item = groups[key] ?? CloudItem(base: base, folderKey: folderKey)
+            if photoExts.contains(ext) {
+                item.photoName = file.name
+                item.photoFileID = file.fileid
+            } else if videoExts.contains(ext) {
+                item.videoName = file.name
+                item.videoFileID = file.fileid
+            } else {
+                continue
+            }
+            groups[key] = item
+        }
+        return groups
     }
 
     func saveToPhotos(_ items: [CloudItem]) async {
@@ -170,17 +198,18 @@ final class AppModel: ObservableObject {
             let dir = try LivePhotoFiles.makeTempDirectory()
             defer { try? FileManager.default.removeItem(at: dir) }
 
-            if let p = item.photoName, let v = item.videoName {
-                let photo = try await client.download(name: p, inFolder: Self.folder, to: dir)
-                let video = try await client.download(name: v, inFolder: Self.folder, to: dir)
+            if let p = item.photoName, let pid = item.photoFileID,
+               let v = item.videoName, let vid = item.videoFileID {
+                let photo = try await client.download(fileid: pid, name: p, to: dir)
+                let video = try await client.download(fileid: vid, name: v, to: dir)
                 try await LivePhotoFiles.saveLivePhoto(photo: photo, video: video)
                 status = "Saved \(item.base) as a Live Photo."
-            } else if let p = item.photoName {
-                let photo = try await client.download(name: p, inFolder: Self.folder, to: dir)
+            } else if let p = item.photoName, let pid = item.photoFileID {
+                let photo = try await client.download(fileid: pid, name: p, to: dir)
                 try await LivePhotoFiles.saveSingle(photo, isVideo: false)
                 status = "Saved \(item.base) as a still (no video found)."
-            } else if let v = item.videoName {
-                let video = try await client.download(name: v, inFolder: Self.folder, to: dir)
+            } else if let v = item.videoName, let vid = item.videoFileID {
+                let video = try await client.download(fileid: vid, name: v, to: dir)
                 try await LivePhotoFiles.saveSingle(video, isVideo: true)
                 status = "Saved \(item.base) as a video (no still found)."
             }
