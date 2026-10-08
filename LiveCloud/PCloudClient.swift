@@ -73,8 +73,9 @@ struct PCloudClient {
     }
 
     /// Every file in the account (all folders, not shared ones). Used to find what is already backed up.
+    /// pCloud refuses a recursive listing of the top folder (error 1101), so the top
+    /// folder is listed on its own and each folder in it is then listed recursively.
     func listAllFiles() async throws -> [PCloudFile] {
-        let json = try await get("listfolder", ["folderid": "0", "recursive": "1", "noshares": "1"])
         var out: [PCloudFile] = []
         func walk(_ folder: [String: Any]) {
             for item in folder["contents"] as? [[String: Any]] ?? [] {
@@ -85,7 +86,23 @@ struct PCloudClient {
                 }
             }
         }
-        if let root = json["metadata"] as? [String: Any] { walk(root) }
+
+        let rootJSON = try await get("listfolder", ["folderid": "0", "noshares": "1"])
+        let topItems = (rootJSON["metadata"] as? [String: Any])?["contents"] as? [[String: Any]] ?? []
+        for item in topItems {
+            if (item["isfolder"] as? Bool) == true {
+                guard let folderid = item["folderid"] as? Int else { continue }
+                let name = item["name"] as? String ?? "?"
+                do {
+                    let json = try await get("listfolder", ["folderid": String(folderid), "recursive": "1", "noshares": "1"])
+                    if let folder = json["metadata"] as? [String: Any] { walk(folder) }
+                } catch {
+                    appLog("Skipped folder \(name): \(error.localizedDescription)")
+                }
+            } else if let file = PCloudFile(item) {
+                out.append(file)
+            }
+        }
         return out
     }
 

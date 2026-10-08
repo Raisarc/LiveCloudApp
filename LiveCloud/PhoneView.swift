@@ -8,6 +8,7 @@ struct PhoneView: View {
     @StateObject private var library = PhoneLibrary()
     @State private var selecting = false
     @State private var confirmDelete = false
+    @StateObject private var previewer = Previewer()
 
     private let columns = [GridItem(.adaptive(minimum: 90), spacing: 2)]
 
@@ -16,7 +17,7 @@ struct PhoneView: View {
             ScrollView {
                 header
                 LazyVGrid(columns: columns, spacing: 2) {
-                    ForEach(library.assets, id: \.localIdentifier) { asset in
+                    ForEach(library.visibleAssets, id: \.localIdentifier) { asset in
                         SquareTile(selected: selecting ? library.selected.contains(asset.localIdentifier) : nil) {
                             AssetThumbnail(asset: asset)
                         } badges: {
@@ -31,11 +32,14 @@ struct PhoneView: View {
                         .onTapGesture {
                             if selecting { library.toggle(asset) }
                         }
+                        .onLongPressGesture(minimumDuration: 0.35) {
+                            previewer.show(asset: asset)
+                        }
                     }
                 }
             }
             .overlay { if library.busy { ProgressView().controlSize(.large) } }
-            .task { await library.start() }
+            .task { await library.start(client: model.client) }
             .refreshable { library.reload() }
             .safeAreaInset(edge: .bottom) {
                 if selecting && !library.selected.isEmpty {
@@ -61,6 +65,9 @@ struct PhoneView: View {
             } message: {
                 Text("Each item is first compared byte-for-byte with pCloud. Only items with an exact copy there are deleted; anything else stays on your iPhone. Deleted items stay in Recently Deleted for 30 days.")
             }
+            .sheet(isPresented: $previewer.isShown) {
+                PreviewSheet(previewer: previewer)
+            }
             .navigationTitle("iPhone")
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
@@ -81,16 +88,18 @@ struct PhoneView: View {
                 }
                 .pickerStyle(.menu)
                 Spacer()
-                Text("\(library.assets.count) items")
+                Text("\(library.visibleAssets.count) items")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
+            Toggle("Only show what's already in pCloud", isOn: $library.onlyInCloud)
+                .font(.subheadline)
             HStack {
                 Button {
                     guard let client = model.client else { return }
                     Task { await library.checkBackups(client: client) }
                 } label: {
-                    Label("Check pCloud", systemImage: "checkmark.icloud")
+                    Label("Re-check pCloud", systemImage: "arrow.clockwise.icloud")
                 }
                 .buttonStyle(.bordered)
                 .disabled(library.busy)

@@ -115,6 +115,7 @@ struct CloudView: View {
     @State private var selecting = false
     @State private var selected: Set<String> = []
     @State private var pending: CloudItem?
+    @StateObject private var previewer = Previewer()
 
     private let columns = [GridItem(.adaptive(minimum: 100), spacing: 2)]
 
@@ -147,6 +148,10 @@ struct CloudView: View {
                                 pending = item
                             }
                         }
+                        .onLongPressGesture(minimumDuration: 0.35) {
+                            guard let client = model.client else { return }
+                            previewer.show(item: item, client: client, folder: AppModel.folder)
+                        }
                     }
                 }
             }
@@ -178,6 +183,9 @@ struct CloudView: View {
                     .padding()
                     .background(.bar)
                 }
+            }
+            .sheet(isPresented: $previewer.isShown) {
+                PreviewSheet(previewer: previewer)
             }
             .navigationTitle("pCloud")
             .toolbar {
