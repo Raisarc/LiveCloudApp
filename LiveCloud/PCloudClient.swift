@@ -7,8 +7,18 @@ struct PCloudError: LocalizedError {
 }
 
 struct PCloudFile {
+    let fileid: Int
     let name: String
-    let size: Int
+    let size: Int64
+
+    init?(_ item: [String: Any]) {
+        guard (item["isfolder"] as? Bool) != true,
+              let fileid = item["fileid"] as? Int,
+              let name = item["name"] as? String else { return nil }
+        self.fileid = fileid
+        self.name = name
+        self.size = (item["size"] as? NSNumber)?.int64Value ?? 0
+    }
 }
 
 /// Minimal client for the pCloud HTTP JSON API (https://docs.pcloud.com).
@@ -59,11 +69,55 @@ struct PCloudClient {
               let contents = metadata["contents"] as? [[String: Any]] else {
             return []
         }
-        return contents.compactMap { item in
-            guard (item["isfolder"] as? Bool) != true,
-                  let name = item["name"] as? String else { return nil }
-            return PCloudFile(name: name, size: item["size"] as? Int ?? 0)
+        return contents.compactMap(PCloudFile.init)
+    }
+
+    /// Every file in the account (all folders, not shared ones). Used to find what is already backed up.
+    func listAllFiles() async throws -> [PCloudFile] {
+        let json = try await get("listfolder", ["folderid": "0", "recursive": "1", "noshares": "1"])
+        var out: [PCloudFile] = []
+        func walk(_ folder: [String: Any]) {
+            for item in folder["contents"] as? [[String: Any]] ?? [] {
+                if (item["isfolder"] as? Bool) == true {
+                    walk(item)
+                } else if let file = PCloudFile(item) {
+                    out.append(file)
+                }
+            }
         }
+        if let root = json["metadata"] as? [String: Any] { walk(root) }
+        return out
+    }
+
+    /// SHA-1 of a file as computed by pCloud (available on both EU and US servers).
+    func sha1(fileid: Int) async throws -> String {
+        let json = try await get("checksumfile", ["fileid": String(fileid)])
+        guard let sha1 = json["sha1"] as? String else {
+            throw PCloudError(message: "No checksum for file \(fileid)")
+        }
+        return sha1.lowercased()
+    }
+
+    // MARK: Thumbnails
+
+    /// Thumbnail links for up to ~100 files in one call. Files without a thumbnail are left out.
+    func thumbnailURLs(fileids: [Int], size: String = "256x256") async throws -> [Int: URL] {
+        guard !fileids.isEmpty else { return [:] }
+        let json = try await get("getthumbslinks", [
+            "fileids": fileids.map(String.init).joined(separator: ","),
+            "size": size,
+            "crop": "1",
+        ])
+        var out: [Int: URL] = [:]
+        for thumb in json["thumbs"] as? [[String: Any]] ?? [] {
+            guard (thumb["result"] as? Int) == 0,
+                  let id = thumb["fileid"] as? Int,
+                  let host = (thumb["hosts"] as? [String])?.first,
+                  let path = thumb["path"] as? String,
+                  let url = URL(string: "https://\(host)\(path)") else { continue }
+            out[id] = url
+        }
+        return out
     }
 
     // MARK: Upload

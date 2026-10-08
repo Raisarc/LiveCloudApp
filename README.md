@@ -35,7 +35,11 @@ With a free Apple ID the app expires after **7 days**. Repeat step 3.2 to refres
 
 - **Log in** with your pCloud email and password, and pick the data region your account uses (shown in pCloud's web settings). The app keeps your login in the iPhone's encrypted Keychain and never sends the password itself over the network.
 - **Upload** tab: choose Live Photos and tap Upload.
-- **pCloud** tab: pull to refresh, tap **Save** on an item to put it back into Photos as a Live Photo.
+- **pCloud** tab: a grid of what LiveCloud uploaded. Tap an item to save it back to Photos as a Live Photo, or tap **Select** to save several at once.
+- **iPhone** tab: your phone's library as a grid. Pick what to show (Photos, Live Photos, Videos, Screenshots, Everything) and tap **Check pCloud**. Items already in pCloud (anywhere in your account, including pCloud's own Automatic Upload) get a green cloud. Tap **Select › Select all in pCloud › Delete** to free up space.
+  - Before deleting, each item is compared byte-for-byte with its copy in pCloud. Anything without an exact copy is never deleted.
+  - Live Photos only count as backed up when both the still and the video are in pCloud (orange cloud = only the still).
+  - Deleted items stay in **Recently Deleted** for 30 days.
 - **Log** tab: shows what happened, including errors. Use **Copy** to share it when something goes wrong.
 
 When asked, allow **full** Photos access; with limited access only the photos you allowed can be uploaded.

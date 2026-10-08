@@ -8,7 +8,11 @@ struct CloudItem: Identifiable {
     let base: String
     var photoName: String?
     var videoName: String?
+    var photoFileID: Int?
+    var videoFileID: Int?
     var id: String { base }
+    /// The file to show as the thumbnail.
+    var thumbFileID: Int? { photoFileID ?? videoFileID }
     var isLive: Bool { photoName != nil && videoName != nil }
 }
 
@@ -18,6 +22,7 @@ final class AppModel: ObservableObject {
 
     @Published var client: PCloudClient?
     @Published var items: [CloudItem] = []
+    @Published var thumbnails: [Int: URL] = [:]
     @Published var busy = false
     @Published var status = ""
 
@@ -110,8 +115,10 @@ final class AppModel: ObservableObject {
                 var item = groups[base] ?? CloudItem(base: base)
                 if Self.photoExts.contains(ext) {
                     item.photoName = file.name
+                    item.photoFileID = file.fileid
                 } else if Self.videoExts.contains(ext) {
                     item.videoName = file.name
+                    item.videoFileID = file.fileid
                 } else {
                     continue
                 }
@@ -119,17 +126,42 @@ final class AppModel: ObservableObject {
             }
             items = groups.values.sorted { $0.base > $1.base }
             appLog("Found \(items.count) item(s) in \(Self.folder)")
+
+            // Thumbnails, in batches of 100.
+            let ids = items.compactMap(\.thumbFileID)
+            var links: [Int: URL] = [:]
+            for start in stride(from: 0, to: ids.count, by: 100) {
+                let batch = Array(ids[start..<min(start + 100, ids.count)])
+                do {
+                    links.merge(try await client.thumbnailURLs(fileids: batch)) { _, new in new }
+                } catch {
+                    appLog("Thumbnails failed: \(error.localizedDescription)")
+                }
+            }
+            thumbnails = links
         } catch {
             status = error.localizedDescription
             appLog("List failed: \(error.localizedDescription)")
         }
     }
 
-    func saveToPhotos(_ item: CloudItem) async {
-        guard let client else { return }
+    func saveToPhotos(_ items: [CloudItem]) async {
+        var saved = 0
+        for (i, item) in items.enumerated() {
+            if items.count > 1 { appLog("Saving \(i + 1) of \(items.count)") }
+            if await saveToPhotos(item) { saved += 1 }
+        }
+        if items.count > 1 {
+            status = "Saved \(saved) of \(items.count) to Photos."
+        }
+    }
+
+    @discardableResult
+    func saveToPhotos(_ item: CloudItem) async -> Bool {
+        guard let client else { return false }
         guard await ensurePhotoAccess() else {
             status = "Photos access denied."
-            return
+            return false
         }
         busy = true
         defer { busy = false }
@@ -153,9 +185,11 @@ final class AppModel: ObservableObject {
                 status = "Saved \(item.base) as a video (no still found)."
             }
             appLog(status)
+            return true
         } catch {
             status = "Save failed: \(error.localizedDescription)"
             appLog(status)
+            return false
         }
     }
 
