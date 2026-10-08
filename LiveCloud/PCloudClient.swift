@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 struct PCloudError: LocalizedError {
@@ -21,28 +22,43 @@ struct PCloudClient {
 
     // MARK: Login
 
-    /// Tries the preferred region first, then the other one.
+    /// Tries the preferred region first, then the other one, and reports both errors if both fail.
+    /// Uses pCloud's digest login, so the password itself is never sent.
     static func login(email: String, password: String, preferredHost: String) async throws -> PCloudClient {
+        let username = email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let hosts = preferredHost == euHost ? [euHost, usHost] : [usHost, euHost]
-        var lastError: Error = PCloudError(message: "Login failed")
+        var failures: [String] = []
         for host in hosts {
+            let region = host == euHost ? "Europe" : "US"
             do {
+                let digestJSON = try await call(host: host, method: "getdigest", params: [:], usePOST: false)
+                guard let digest = digestJSON["digest"] as? String else {
+                    throw PCloudError(message: "No digest returned")
+                }
+                // passworddigest = sha1(password + sha1(lowercase username) + digest)
+                let passwordDigest = sha1Hex(password + sha1Hex(username) + digest)
                 let json = try await call(host: host, method: "userinfo", params: [
                     "getauth": "1",
                     "logout": "1",
-                    "username": email,
-                    "password": password,
+                    "username": username,
+                    "digest": digest,
+                    "passworddigest": passwordDigest,
                 ], usePOST: true)
                 if let auth = json["auth"] as? String {
                     appLog("Logged in via \(host)")
                     return PCloudClient(host: host, auth: auth)
                 }
+                failures.append("\(region): no token returned")
             } catch {
                 appLog("Login via \(host) failed: \(error.localizedDescription)")
-                lastError = error
+                failures.append("\(region): \(error.localizedDescription)")
             }
         }
-        throw lastError
+        throw PCloudError(message: failures.joined(separator: "\n"))
+    }
+
+    private static func sha1Hex(_ text: String) -> String {
+        Insecure.SHA1.hash(data: Data(text.utf8)).map { String(format: "%02x", $0) }.joined()
     }
 
     // MARK: Folder operations
