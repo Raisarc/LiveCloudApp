@@ -67,6 +67,12 @@ final class PhoneLibrary: ObservableObject {
         didSet { reload() }
     }
     @Published private(set) var assets: [PHAsset] = []
+    /// Show only items whose files are already in pCloud.
+    @Published var onlyInCloud = false
+
+    var visibleAssets: [PHAsset] {
+        onlyInCloud ? assets.filter { states[$0.localIdentifier] == .inCloud } : assets
+    }
     @Published private(set) var states: [String: BackupState] = [:]
     @Published var selected: Set<String> = []
     @Published private(set) var busy = false
@@ -79,12 +85,15 @@ final class PhoneLibrary: ObservableObject {
 
     // MARK: Loading
 
-    func start() async {
+    func start(client: PCloudClient?) async {
         guard await Self.ensureAccess() else {
             status = "Allow full Photos access in Settings › LiveCloud › Photos."
             return
         }
         reload()
+        if let client, !cloudIndexLoaded {
+            await checkBackups(client: client)
+        }
     }
 
     func reload() {
@@ -98,6 +107,10 @@ final class PhoneLibrary: ObservableObject {
         assets = list
         let ids = Set(list.map(\.localIdentifier))
         selected = selected.intersection(ids)
+        // Re-use the pCloud file list we already have, so switching filters needs no new "Check".
+        if cloudIndexLoaded {
+            Task { await compareWithCloud() }
+        }
     }
 
     func state(of asset: PHAsset) -> BackupState? {
@@ -120,6 +133,11 @@ final class PhoneLibrary: ObservableObject {
             appLog(status)
             return
         }
+        await compareWithCloud()
+    }
+
+    /// Marks each asset in the current filter using the cached pCloud file list.
+    private func compareWithCloud() async {
         status = "Comparing \(assets.count) items with pCloud…"
         let list = assets
         let index = cloudBySize
@@ -133,7 +151,7 @@ final class PhoneLibrary: ObservableObject {
         states.merge(result) { _, new in new }
         let found = result.values.filter { $0 == .inCloud }.count
         let partial = result.values.filter { $0 == .partial }.count
-        status = "\(found) of \(list.count) look backed up in pCloud."
+        status = "\(found) of \(list.count) are already in pCloud."
             + (partial > 0 ? " \(partial) Live Photo(s) have only the still in pCloud." : "")
         appLog(status)
     }
