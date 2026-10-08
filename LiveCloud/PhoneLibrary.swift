@@ -31,6 +31,23 @@ enum PhoneFilter: String, CaseIterable, Identifiable {
     }
 }
 
+/// Holds a running SHA-1 so it can be updated from Photos' data callbacks,
+/// which arrive one after another on a background queue.
+final class HasherBox: @unchecked Sendable {
+    private var hasher = Insecure.SHA1()
+    private let lock = NSLock()
+
+    func update(_ data: Data) {
+        lock.lock(); defer { lock.unlock() }
+        hasher.update(data: data)
+    }
+
+    func finalHex() -> String {
+        lock.lock(); defer { lock.unlock() }
+        return hasher.finalize().map { String(format: "%02x", $0) }.joined()
+    }
+}
+
 enum BackupState {
     /// Every original file of the item has a same-size file in pCloud.
     case inCloud
@@ -263,17 +280,16 @@ final class PhoneLibrary: ObservableObject {
     /// Streams the file through SHA-1 without loading it into memory at once.
     nonisolated static func localSHA1(_ resource: PHAssetResource) async throws -> String {
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<String, Error>) in
-            var hasher = Insecure.SHA1()
+            let box = HasherBox()
             let options = PHAssetResourceRequestOptions()
             options.isNetworkAccessAllowed = true // fetch from iCloud if needed
             PHAssetResourceManager.default().requestData(for: resource, options: options) { data in
-                hasher.update(data: data)
+                box.update(data)
             } completionHandler: { error in
                 if let error {
                     continuation.resume(throwing: error)
                 } else {
-                    let hex = hasher.finalize().map { String(format: "%02x", $0) }.joined()
-                    continuation.resume(returning: hex)
+                    continuation.resume(returning: box.finalHex())
                 }
             }
         }
